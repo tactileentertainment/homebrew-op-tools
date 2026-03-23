@@ -13,7 +13,7 @@ brew install op-tactile
 
 ```bash
 VERSION=v1.4.0
-BASE_URL="https://raw.githubusercontent.com/tactileentertainment/op-tools/${VERSION}/scripts"
+BASE_URL="https://raw.githubusercontent.com/tactileentertainment/homebrew-op-tools/${VERSION}/scripts"
 mkdir -p /usr/local/libexec
 curl -fsSL "${BASE_URL}/_op-tactile-common.sh" -o /usr/local/libexec/_op-tactile-common.sh
 for cmd in op-read op-inject op-item-create op-item-delete; do
