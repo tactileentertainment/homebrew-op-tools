@@ -16,7 +16,7 @@ VERSION=v1.5.0
 BASE_URL="https://raw.githubusercontent.com/tactileentertainment/homebrew-op-tools/${VERSION}/scripts"
 mkdir -p /usr/local/libexec
 curl -fsSL "${BASE_URL}/_op-tactile-common.sh" -o /usr/local/libexec/_op-tactile-common.sh
-for cmd in op-read op-inject op-item-create op-item-delete; do
+for cmd in op-read op-inject op-item-create op-item-delete op-item-edit; do
   curl -fsSL "${BASE_URL}/${cmd}.sh" -o /usr/local/bin/${cmd}
   chmod +x /usr/local/bin/${cmd}
   sed -i 's|${SCRIPT_DIR}/../libexec/_op-tactile-common.sh|/usr/local/libexec/_op-tactile-common.sh|' /usr/local/bin/${cmd}
@@ -31,6 +31,7 @@ done
 | `op-inject` | `op inject` | Inject secrets into template files |
 | `op-item-create` | `op item create` | Create 1Password items |
 | `op-item-delete` | `op item delete` | Delete 1Password items |
+| `op-item-edit` | `op item edit` | Edit 1Password items |
 
 ## Usage
 
@@ -49,6 +50,9 @@ op-item-create --category apicredential --title "my-secret" --vault "my-vault" "
 
 # op-item-delete — delete an item
 op-item-delete --vault "my-vault" "my-item-title"
+
+# op-item-edit — edit an existing item
+op-item-edit "my-item" --vault "my-vault" "username=newuser"
 
 # All commands support --help
 op-read --help
