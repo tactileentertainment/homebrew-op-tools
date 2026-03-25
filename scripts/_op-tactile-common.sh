@@ -30,6 +30,8 @@ _op_trip_circuit_breaker() {
 _op_exec_with_failover() {
   local connect_timeout="${OP_CONNECT_TIMEOUT:-3}"
   local result=""
+  local err_file=""
+  err_file="$(mktemp)"
 
   # Try Connect server first
   if [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connect_available; then
@@ -38,7 +40,8 @@ _op_exec_with_failover() {
         HOME="$HOME" PATH="$PATH" \
         OP_CONNECT_HOST="${OP_CONNECT_HOST}" \
         OP_CONNECT_TOKEN="${OP_CONNECT_TOKEN}" \
-        "$@" 2>/dev/null) && {
+        "$@" 2>"$err_file") && {
+          rm -f "$err_file"
           echo "$result"
           return 0
         }
@@ -47,7 +50,9 @@ _op_exec_with_failover() {
         HOME="$HOME" PATH="$PATH" \
         OP_CONNECT_HOST="${OP_CONNECT_HOST}" \
         OP_CONNECT_TOKEN="${OP_CONNECT_TOKEN}" \
-        "$@") && {
+        "$@" 2>"$err_file") && {
+          [ -s "$err_file" ] && cat "$err_file" >&2
+          rm -f "$err_file"
           echo "$result"
           return 0
         }
@@ -63,23 +68,30 @@ _op_exec_with_failover() {
       result=$(env -i \
         HOME="$HOME" PATH="$PATH" \
         OP_SERVICE_ACCOUNT_TOKEN="${OP_SERVICE_ACCOUNT_TOKEN}" \
-        "$@" 2>/dev/null) || {
+        "$@" 2>"$err_file") || {
           echo "${_OP_SCRIPT_NAME}: Failed via service account" >&2
+          [ -s "$err_file" ] && cat "$err_file" >&2
+          rm -f "$err_file"
           return 1
         }
     else
       result=$(env -i \
         HOME="$HOME" PATH="$PATH" \
         OP_SERVICE_ACCOUNT_TOKEN="${OP_SERVICE_ACCOUNT_TOKEN}" \
-        "$@") || {
+        "$@" 2>"$err_file") || {
           echo "${_OP_SCRIPT_NAME}: Failed via service account" >&2
+          [ -s "$err_file" ] && cat "$err_file" >&2
+          rm -f "$err_file"
           return 1
         }
+      [ -s "$err_file" ] && cat "$err_file" >&2
     fi
+    rm -f "$err_file"
     echo "$result"
     return 0
   fi
 
+  rm -f "$err_file"
   echo "${_OP_SCRIPT_NAME}: No credentials configured. Set OP_CONNECT_HOST + OP_CONNECT_TOKEN (preferred) or OP_SERVICE_ACCOUNT_TOKEN or both." >&2
   return 1
 }
