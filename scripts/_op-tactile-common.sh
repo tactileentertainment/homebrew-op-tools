@@ -4,7 +4,6 @@
 # Each script must set before sourcing:
 #   _OP_SCRIPT_NAME       - script name for log prefixes (e.g. "op-read")
 #   _OP_SUPPRESS_STDERR   - "true" to suppress op stderr (for read ops), "false" to show it
-#   _OP_SKIP_CONNECT      - "true" to skip Connect server (for commands it doesn't support)
 
 CIRCUIT_BREAKER="/tmp/op-connect-circuit-breaker"
 
@@ -34,8 +33,8 @@ _op_exec_with_failover() {
   local err_file=""
   err_file="$(mktemp)"
 
-  # Try Connect server first (skip for commands Connect doesn't support)
-  if [ "${_OP_SKIP_CONNECT}" != "true" ] && [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connect_available; then
+  # Try Connect server first
+  if [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connect_available; then
     if [ "$_OP_SUPPRESS_STDERR" = "true" ]; then
       result=$(timeout "${connect_timeout}" env -i \
         HOME="$HOME" PATH="$PATH" \
