@@ -2,13 +2,13 @@ class OpTactile < Formula
   desc "1Password CLI wrappers with Connect server failover"
   homepage "https://github.com/tactileentertainment/homebrew-op-tools"
   url "https://github.com/tactileentertainment/homebrew-op-tools.git",
-      tag: "v1.4.0"
+      tag: "v1.5.0"
   license "MIT"
 
   def install
     libexec.install "scripts/_op-tactile-common.sh"
 
-    %w[op-read op-inject op-item-create op-item-delete].each do |cmd|
+    %w[op-read op-inject op-item-create op-item-delete op-item-edit].each do |cmd|
       bin.install "scripts/#{cmd}.sh" => cmd
       inreplace bin/cmd, '${SCRIPT_DIR}/../libexec/_op-tactile-common.sh',
                          "#{libexec}/_op-tactile-common.sh"
@@ -25,6 +25,7 @@ class OpTactile < Formula
         op-inject        Inject secrets into templates (op inject)
         op-item-create   Create items (op item create)
         op-item-delete   Delete items (op item delete)
+        op-item-edit     Edit items (op item edit)
 
       Required env vars (at least one set):
         OP_CONNECT_HOST + OP_CONNECT_TOKEN   (Connect server)
@@ -33,7 +34,7 @@ class OpTactile < Formula
   end
 
   test do
-    %w[op-read op-inject op-item-create op-item-delete].each do |cmd|
+    %w[op-read op-inject op-item-create op-item-delete op-item-edit].each do |cmd|
       assert_match "help", shell_output("#{bin}/#{cmd} --help 2>&1", 0)
     end
 
