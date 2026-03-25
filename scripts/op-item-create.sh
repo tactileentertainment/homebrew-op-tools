@@ -3,7 +3,6 @@ set -euo pipefail
 
 _OP_SCRIPT_NAME="op-item-create"
 _OP_SUPPRESS_STDERR="false"
-_OP_SKIP_CONNECT="true"  # Connect server does not support op item create
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=_op-tactile-common.sh
