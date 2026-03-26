@@ -59,6 +59,7 @@ while [ $# -gt 0 ]; do
     --help|-h)  show_help ;;
     --vault)    VAULT="$2"; shift 2 ;;
     --)         shift; [ $# -gt 0 ] && ITEM="$1"; break ;;
+    -)           shift ;;  # bare "-" (op CLI stdin indicator) — skip
     -*)         echo "${_OP_SCRIPT_NAME}: Unknown option: $1" >&2; exit 1 ;;
     *)          ITEM="$1"; shift ;;
   esac

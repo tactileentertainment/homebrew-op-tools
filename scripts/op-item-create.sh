@@ -67,6 +67,7 @@ while [ $# -gt 0 ]; do
     --title)     TITLE="$2"; shift 2 ;;
     --category)  CATEGORY="$2"; shift 2 ;;
     --)          shift; FIELDS+=("$@"); break ;;
+    -)           shift ;;  # bare "-" (op CLI stdin indicator) — skip
     -*)          echo "${_OP_SCRIPT_NAME}: Unknown option: $1" >&2; exit 1 ;;
     *)           FIELDS+=("$1"); shift ;;
   esac
