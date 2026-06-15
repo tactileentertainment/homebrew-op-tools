@@ -166,6 +166,14 @@ _op_trip_circuit_breaker() {
   touch "$CIRCUIT_BREAKER"
 }
 
+# Probes whether the Connect server is reachable and the token is valid.
+# Lets callers tell a genuine "not found" (Connect is healthy, the secret
+# simply isn't there) apart from a transport/auth failure (Connect is down).
+# Returns: 0 if Connect responds, 1 if unreachable/unauthorized.
+_op_connect_healthy() {
+  _op_connect_api GET "/v1/vaults" >/dev/null 2>&1
+}
+
 # Runs an op command with Connect-first, service-account-fallback strategy.
 # Arguments: the full op command (e.g. op read "op://vault/item/field")
 # Stdout: the command's output
@@ -177,29 +185,34 @@ _op_exec_with_failover() {
 
   # Try Connect server first
   if [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connect_available; then
-    if [ "$_OP_SUPPRESS_STDERR" = "true" ]; then
-      result=$(timeout "${connect_timeout}" env -i \
-        HOME="$HOME" PATH="$PATH" \
-        OP_CONNECT_HOST="${OP_CONNECT_HOST}" \
-        OP_CONNECT_TOKEN="${OP_CONNECT_TOKEN}" \
-        "$@" 2>"$err_file") && {
-          rm -f "$err_file"
-          echo "$result"
-          return 0
-        }
-    else
-      result=$(timeout "${connect_timeout}" env -i \
-        HOME="$HOME" PATH="$PATH" \
-        OP_CONNECT_HOST="${OP_CONNECT_HOST}" \
-        OP_CONNECT_TOKEN="${OP_CONNECT_TOKEN}" \
-        "$@" 2>"$err_file") && {
-          [ -s "$err_file" ] && cat "$err_file" >&2
-          rm -f "$err_file"
-          echo "$result"
-          return 0
-        }
+    local rc=0
+    result=$(timeout "${connect_timeout}" env -i \
+      HOME="$HOME" PATH="$PATH" \
+      OP_CONNECT_HOST="${OP_CONNECT_HOST}" \
+      OP_CONNECT_TOKEN="${OP_CONNECT_TOKEN}" \
+      "$@" 2>"$err_file") || rc=$?
+
+    if [ "$rc" -eq 0 ]; then
+      # op may emit non-fatal warnings on stderr even on success; pass them through.
+      [ "$_OP_SUPPRESS_STDERR" != "true" ] && [ -s "$err_file" ] && cat "$err_file" >&2
+      rm -f "$err_file"
+      echo "$result"
+      return 0
     fi
-    echo "${_OP_SCRIPT_NAME}: Connect failed, tripping circuit breaker" >&2
+
+    # op exited non-zero. A timeout (124) or an unreachable/unauthorized Connect
+    # server is a real connection failure → trip the breaker and fail over. But
+    # if Connect is healthy, the secret simply isn't there (or isn't visible to
+    # this token): that is NOT a connection problem, so surface the real error,
+    # don't trip the breaker, and don't pointlessly fall back.
+    if [ "$rc" -ne 124 ] && _op_connect_healthy; then
+      echo "${_OP_SCRIPT_NAME}: '$*' failed via Connect. The server is reachable, so the requested item/secret does not exist in the given vault or is not visible to this Connect token — see the error below." >&2
+      [ -s "$err_file" ] && cat "$err_file" >&2
+      rm -f "$err_file"
+      return "$rc"
+    fi
+
+    echo "${_OP_SCRIPT_NAME}: Connect server unreachable or timed out, tripping circuit breaker" >&2
     _op_trip_circuit_breaker
   fi
 

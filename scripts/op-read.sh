@@ -21,9 +21,12 @@ USAGE:
 
 HOW IT WORKS:
   1. If OP_CONNECT_HOST + OP_CONNECT_TOKEN are set, reads via Connect server first
-  2. If Connect fails or times out, trips a circuit breaker so subsequent reads
-     skip Connect and go straight to the service account (avoids cumulative delays)
-  3. Falls back to OP_SERVICE_ACCOUNT_TOKEN if Connect is unavailable
+  2. If the Connect server is unreachable or times out, trips a circuit breaker so
+     subsequent reads skip Connect and go straight to the service account (avoids
+     cumulative delays)
+  3. Falls back to OP_SERVICE_ACCOUNT_TOKEN only when Connect is unavailable. A
+     secret that simply isn't found (Connect reachable) is reported as-is, with no
+     fallback and no circuit breaker
   4. Set both credential sets for a safe failover setup
 
 ENVIRONMENT VARIABLES:

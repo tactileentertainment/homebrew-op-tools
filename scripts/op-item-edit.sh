@@ -138,7 +138,14 @@ if [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connec
   if connect_edit; then
     exit 0
   fi
-  echo "${_OP_SCRIPT_NAME}: Connect failed, tripping circuit breaker" >&2
+  # connect_edit failed. If Connect is still reachable, this is a real API error
+  # (item not found, bad field, etc.), not a connection problem: don't trip the
+  # breaker and don't fall back — the service account would fail the same way.
+  if _op_connect_healthy; then
+    echo "${_OP_SCRIPT_NAME}: failed to edit item \"${ITEM}\" in vault \"${VAULT}\". The Connect server is reachable and returned the error above — likely the item does not exist in this vault, or a field name/value is invalid." >&2
+    exit 1
+  fi
+  echo "${_OP_SCRIPT_NAME}: Connect server unreachable, tripping circuit breaker" >&2
   _op_trip_circuit_breaker
 fi
 
