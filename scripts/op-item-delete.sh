@@ -92,7 +92,14 @@ if [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connec
   if connect_delete; then
     exit 0
   fi
-  echo "${_OP_SCRIPT_NAME}: Connect failed, tripping circuit breaker" >&2
+  # connect_delete failed. If Connect is still reachable, this is a real API
+  # error (item not found, etc.), not a connection problem: don't trip the
+  # breaker and don't fall back — the service account would fail the same way.
+  if _op_connect_healthy; then
+    echo "${_OP_SCRIPT_NAME}: failed to delete item \"${ITEM}\" in vault \"${VAULT}\". The Connect server is reachable and returned the error above — likely the item does not exist in this vault or is not visible to this Connect token." >&2
+    exit 1
+  fi
+  echo "${_OP_SCRIPT_NAME}: Connect server unreachable, tripping circuit breaker" >&2
   _op_trip_circuit_breaker
 fi
 

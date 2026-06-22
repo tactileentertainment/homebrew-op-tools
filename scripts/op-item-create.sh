@@ -118,7 +118,14 @@ if [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connec
   if connect_create; then
     exit 0
   fi
-  echo "${_OP_SCRIPT_NAME}: Connect failed, tripping circuit breaker" >&2
+  # connect_create failed. If Connect is still reachable, this is a real API
+  # error (bad vault, duplicate, etc.), not a connection problem: don't trip the
+  # breaker and don't fall back — the service account would fail the same way.
+  if _op_connect_healthy; then
+    echo "${_OP_SCRIPT_NAME}: failed to create item \"${TITLE}\" in vault \"${VAULT}\". The Connect server is reachable and returned the error above — likely the item title already exists in this vault, or the category/field values are invalid." >&2
+    exit 1
+  fi
+  echo "${_OP_SCRIPT_NAME}: Connect server unreachable, tripping circuit breaker" >&2
   _op_trip_circuit_breaker
 fi
 
