@@ -38,7 +38,8 @@ ENVIRONMENT VARIABLES:
   OP_CONNECT_HOST           Connect server URL
   OP_CONNECT_TOKEN          Connect server access token
   OP_SERVICE_ACCOUNT_TOKEN  Service account token (fallback)
-  OP_CONNECT_TIMEOUT        Connect timeout in seconds (default: 3)
+  OP_CONNECT_TIMEOUT        Connect timeout per attempt in seconds (default: 10)
+  OP_CONNECT_ATTEMPTS       Safe readiness/GET attempts (default: 3)
 
 EXAMPLES:
   op-item-create --vault my-vault --title "API Key" --category apicredential "credential=secret123"
@@ -115,18 +116,22 @@ connect_create() {
 # ── Try Connect, then fallback ───────────────────────────────────────────────
 
 if [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connect_available && _op_require_jq; then
-  if connect_create; then
+  if ! _op_connect_ready; then
+    echo "${_OP_SCRIPT_NAME}: Connect server did not become ready after $(_op_connect_attempts) attempts, tripping circuit breaker" >&2
+    _op_trip_circuit_breaker
+  elif connect_create; then
     exit 0
+  else
+    # connect_create failed. If Connect is still reachable, this is a real API
+    # error (bad vault, duplicate, etc.), not a connection problem: don't trip the
+    # breaker and don't fall back — the service account would fail the same way.
+    if _op_connect_healthy; then
+      echo "${_OP_SCRIPT_NAME}: failed to create item \"${TITLE}\" in vault \"${VAULT}\". The Connect server is reachable and returned the error above — likely the item title already exists in this vault, or the category/field values are invalid." >&2
+      exit 1
+    fi
+    echo "${_OP_SCRIPT_NAME}: Connect server unreachable, tripping circuit breaker" >&2
+    _op_trip_circuit_breaker
   fi
-  # connect_create failed. If Connect is still reachable, this is a real API
-  # error (bad vault, duplicate, etc.), not a connection problem: don't trip the
-  # breaker and don't fall back — the service account would fail the same way.
-  if _op_connect_healthy; then
-    echo "${_OP_SCRIPT_NAME}: failed to create item \"${TITLE}\" in vault \"${VAULT}\". The Connect server is reachable and returned the error above — likely the item title already exists in this vault, or the category/field values are invalid." >&2
-    exit 1
-  fi
-  echo "${_OP_SCRIPT_NAME}: Connect server unreachable, tripping circuit breaker" >&2
-  _op_trip_circuit_breaker
 fi
 
 # ── Service account fallback ─────────────────────────────────────────────────

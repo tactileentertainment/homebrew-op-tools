@@ -32,7 +32,8 @@ ENVIRONMENT VARIABLES:
   OP_CONNECT_HOST           Connect server URL
   OP_CONNECT_TOKEN          Connect server access token
   OP_SERVICE_ACCOUNT_TOKEN  Service account token (fallback)
-  OP_CONNECT_TIMEOUT        Connect timeout in seconds (default: 3)
+  OP_CONNECT_TIMEOUT        Connect timeout per attempt in seconds (default: 10)
+  OP_CONNECT_ATTEMPTS       Safe readiness/GET attempts (default: 3)
 
 EXAMPLES:
   op-inject -i .env.tpl -o .env
