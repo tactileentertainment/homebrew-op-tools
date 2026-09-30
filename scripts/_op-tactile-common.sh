@@ -23,6 +23,18 @@ _op_require_jq() {
 
 # ─── Connect REST API helpers ───────────────────────────────────────────────
 
+_op_connect_timeout() {
+  echo "${OP_CONNECT_TIMEOUT:-10}"
+}
+
+_op_connect_attempts() {
+  local attempts="${OP_CONNECT_ATTEMPTS:-3}"
+  case "$attempts" in
+    ''|*[!0-9]*|0) attempts=3 ;;
+  esac
+  echo "$attempts"
+}
+
 # Makes an HTTP request to the Connect REST API.
 # Args: METHOD ENDPOINT [BODY]
 # Stdout: response body
@@ -31,9 +43,19 @@ _op_connect_api() {
   local method="$1"
   local endpoint="$2"
   local body="${3:-}"
-  local connect_timeout="${OP_CONNECT_TIMEOUT:-3}"
+  local connect_timeout
+  connect_timeout=$(_op_connect_timeout)
   local url="${OP_CONNECT_HOST}${endpoint}"
-  local response_file http_code
+  local response_file http_code curl_rc err
+  local attempt=1
+  local max_attempts=1
+
+  # GET/HEAD requests are safe to retry. Mutating requests deliberately remain
+  # single-shot: a timed-out POST may already have created an item server-side,
+  # so replaying it could create duplicates.
+  case "$method" in
+    GET|HEAD) max_attempts=$(_op_connect_attempts) ;;
+  esac
 
   response_file="$(mktemp)"
 
@@ -51,26 +73,39 @@ _op_connect_api() {
     curl_args+=(-d "$body")
   fi
 
-  http_code=$(curl "${curl_args[@]}" "$url" 2>/dev/null) || {
-    local err
-    err=$(cat "$response_file" 2>/dev/null)
-    rm -f "$response_file"
-    [ -n "$err" ] && echo "${_OP_SCRIPT_NAME}: Connect API error: $err" >&2
-    return 1
-  }
+  while [ "$attempt" -le "$max_attempts" ]; do
+    : > "$response_file"
+    http_code=""
+    curl_rc=0
+    http_code=$(curl "${curl_args[@]}" "$url" 2>/dev/null) || curl_rc=$?
 
-  if [[ "$http_code" =~ ^2 ]]; then
-    cat "$response_file"
-    rm -f "$response_file"
-    return 0
-  else
-    local err
+    if [ "$curl_rc" -eq 0 ] && [[ "$http_code" =~ ^2 ]]; then
+      cat "$response_file"
+      rm -f "$response_file"
+      return 0
+    fi
+
+    # Retry only transport failures and transient HTTP responses. Permanent
+    # client errors (for example 401, 403, or 404) fail immediately.
+    if [ "$attempt" -lt "$max_attempts" ] && {
+      { [ "$curl_rc" -ne 0 ] && [ "$curl_rc" -ne 22 ]; } ||
+      [[ "$http_code" =~ ^(408|429|5[0-9][0-9])$ ]]
+    }; then
+      echo "${_OP_SCRIPT_NAME}: Connect attempt ${attempt}/${max_attempts} failed; retrying" >&2
+      attempt=$((attempt + 1))
+      continue
+    fi
+
     err=$(cat "$response_file" 2>/dev/null)
     rm -f "$response_file"
-    echo "${_OP_SCRIPT_NAME}: Connect API returned HTTP $http_code" >&2
+    if [ -n "$http_code" ] && [ "$http_code" != "000" ]; then
+      echo "${_OP_SCRIPT_NAME}: Connect API returned HTTP $http_code" >&2
+    else
+      echo "${_OP_SCRIPT_NAME}: Connect API request failed after ${attempt} attempt(s)" >&2
+    fi
     [ -n "$err" ] && echo "${_OP_SCRIPT_NAME}: $err" >&2
     return 1
-  fi
+  done
 }
 
 # Resolves a vault name to its UUID. If input looks like a UUID, returns as-is.
@@ -174,46 +209,59 @@ _op_connect_healthy() {
   _op_connect_api GET "/v1/vaults" >/dev/null 2>&1
 }
 
+# Waits for Connect to become ready before issuing the requested command. The
+# probe is a safe GET and can therefore be retried without replaying a create,
+# edit, delete, or output-producing command.
+_op_connect_ready() {
+  _op_connect_api GET "/v1/vaults" >/dev/null
+}
+
 # Runs an op command with Connect-first, service-account-fallback strategy.
 # Arguments: the full op command (e.g. op read "op://vault/item/field")
 # Stdout: the command's output
 _op_exec_with_failover() {
-  local connect_timeout="${OP_CONNECT_TIMEOUT:-3}"
+  local connect_timeout
+  connect_timeout=$(_op_connect_timeout)
   local result=""
   local err_file=""
   err_file="$(mktemp)"
 
   # Try Connect server first
   if [ -n "${OP_CONNECT_TOKEN:-}" ] && [ -n "${OP_CONNECT_HOST:-}" ] && _op_connect_available; then
-    local rc=0
-    result=$(timeout "${connect_timeout}" env -i \
-      HOME="$HOME" PATH="$PATH" \
-      OP_CONNECT_HOST="${OP_CONNECT_HOST}" \
-      OP_CONNECT_TOKEN="${OP_CONNECT_TOKEN}" \
-      "$@" 2>"$err_file") || rc=$?
+    if ! _op_connect_ready; then
+      echo "${_OP_SCRIPT_NAME}: Connect server did not become ready after $(_op_connect_attempts) attempts, tripping circuit breaker" >&2
+      _op_trip_circuit_breaker
+    else
+      local rc=0
+      result=$(timeout "${connect_timeout}" env -i \
+        HOME="$HOME" PATH="$PATH" \
+        OP_CONNECT_HOST="${OP_CONNECT_HOST}" \
+        OP_CONNECT_TOKEN="${OP_CONNECT_TOKEN}" \
+        "$@" 2>"$err_file") || rc=$?
 
-    if [ "$rc" -eq 0 ]; then
-      # op may emit non-fatal warnings on stderr even on success; pass them through.
-      [ "$_OP_SUPPRESS_STDERR" != "true" ] && [ -s "$err_file" ] && cat "$err_file" >&2
-      rm -f "$err_file"
-      echo "$result"
-      return 0
+      if [ "$rc" -eq 0 ]; then
+        # op may emit non-fatal warnings on stderr even on success; pass them through.
+        [ "$_OP_SUPPRESS_STDERR" != "true" ] && [ -s "$err_file" ] && cat "$err_file" >&2
+        rm -f "$err_file"
+        echo "$result"
+        return 0
+      fi
+
+      # op exited non-zero. A timeout (124) or an unreachable/unauthorized Connect
+      # server is a real connection failure → trip the breaker and fail over. But
+      # if Connect is healthy, the secret simply isn't there (or isn't visible to
+      # this token): that is NOT a connection problem, so surface the real error,
+      # don't trip the breaker, and don't pointlessly fall back.
+      if [ "$rc" -ne 124 ] && _op_connect_healthy; then
+        echo "${_OP_SCRIPT_NAME}: '$*' failed via Connect. The server is reachable, so the requested item/secret does not exist in the given vault or is not visible to this Connect token — see the error below." >&2
+        [ -s "$err_file" ] && cat "$err_file" >&2
+        rm -f "$err_file"
+        return "$rc"
+      fi
+
+      echo "${_OP_SCRIPT_NAME}: Connect server unreachable or timed out, tripping circuit breaker" >&2
+      _op_trip_circuit_breaker
     fi
-
-    # op exited non-zero. A timeout (124) or an unreachable/unauthorized Connect
-    # server is a real connection failure → trip the breaker and fail over. But
-    # if Connect is healthy, the secret simply isn't there (or isn't visible to
-    # this token): that is NOT a connection problem, so surface the real error,
-    # don't trip the breaker, and don't pointlessly fall back.
-    if [ "$rc" -ne 124 ] && _op_connect_healthy; then
-      echo "${_OP_SCRIPT_NAME}: '$*' failed via Connect. The server is reachable, so the requested item/secret does not exist in the given vault or is not visible to this Connect token — see the error below." >&2
-      [ -s "$err_file" ] && cat "$err_file" >&2
-      rm -f "$err_file"
-      return "$rc"
-    fi
-
-    echo "${_OP_SCRIPT_NAME}: Connect server unreachable or timed out, tripping circuit breaker" >&2
-    _op_trip_circuit_breaker
   fi
 
   # Fallback to service account

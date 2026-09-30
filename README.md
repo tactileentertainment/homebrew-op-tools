@@ -65,22 +65,24 @@ op-read --help
 | `OP_CONNECT_HOST` | One set required | Connect server URL |
 | `OP_CONNECT_TOKEN` | One set required | Connect server access token |
 | `OP_SERVICE_ACCOUNT_TOKEN` | One set required | Service account token (fallback) |
-| `OP_CONNECT_TIMEOUT` | Optional | Connect timeout in seconds (default: 3) |
+| `OP_CONNECT_TIMEOUT` | Optional | Connect timeout per attempt in seconds (default: 10) |
+| `OP_CONNECT_ATTEMPTS` | Optional | Safe readiness/GET attempts before failover (default: 3) |
 
 ## How It Works
 
 **`op-read` and `op-inject`** use the `op` CLI with Connect-first failover:
 
-1. If `OP_CONNECT_TOKEN` and `OP_CONNECT_HOST` are set, tries the Connect server first
-2. If Connect fails, trips a circuit breaker and falls back to the service account
+1. If `OP_CONNECT_TOKEN` and `OP_CONNECT_HOST` are set, probes Connect readiness up to three times, with a 10-second timeout per attempt
+2. Once ready, runs the requested command once; if Connect fails, trips a circuit breaker and falls back to the service account
 3. Subsequent calls skip Connect (circuit breaker) to avoid cumulative timeout delays
 4. If only `OP_SERVICE_ACCOUNT_TOKEN` is set, uses the service account directly
 
 **`op-item-create`, `op-item-delete`, `op-item-edit`** use the Connect REST API directly via `curl` (the `op` CLI doesn't support these operations via Connect):
 
-1. If Connect credentials are set and `jq` is available, calls the Connect REST API with `curl`
-2. If Connect fails or `jq` is missing, falls back to `op` CLI with `OP_SERVICE_ACCOUNT_TOKEN`
-3. Same circuit breaker pattern as above
+1. If Connect credentials are set and `jq` is available, probes Connect readiness up to three times, then calls the Connect REST API with `curl`
+2. Safe GETs are retried, but mutating POST/PUT/DELETE requests run once to prevent duplicate or repeated changes
+3. If Connect fails or `jq` is missing, falls back to `op` CLI with `OP_SERVICE_ACCOUNT_TOKEN`
+4. Same circuit breaker pattern as above
 
 ## Prerequisites
 
